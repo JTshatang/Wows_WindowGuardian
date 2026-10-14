@@ -1,0 +1,12 @@
+# 运行时产物 —— 不进版本库（会持续累积，且含本机窗口标题等隐私信息）
+*.log
+guardoff-*.txt
+guardian-dump.txt
+panel.png
+
+# 编译产物 —— 源码 + README 里的 csc 命令即可重建
+*.exe
+*.pdb
+*.mdb
+bin/
+obj/
