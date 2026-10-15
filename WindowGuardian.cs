@@ -251,6 +251,12 @@ namespace WindowGuardian
         private CheckBox _chkNoLog;
         private bool _noLogFiles;
         private readonly List<string> _uiLines = new List<string>();
+        // UI 日志簿记 —— 见 Log()。日志框改成增量追加、按行数摊销重建、
+        // 滚动节流，并且面板隐藏时完全不碰控件。
+        private int _uiPending;
+        private DateTime _uiScrollAt = DateTime.MinValue;
+        private const int _uiMaxLines = 400;
+        private const int _uiCompactEvery = 50;
         private bool _console;
 
         internal Guardian(string exeDir, string logPath, bool createUi, bool startHidden)
@@ -1120,6 +1126,17 @@ namespace WindowGuardian
             if (_form == null) return;
             _form.Show();
             if (_form.WindowState == FormWindowState.Minimized) _form.WindowState = FormWindowState.Normal;
+            // 面板隐藏期间写下的日志没有进过文本框，这里一次性补上
+            try
+            {
+                _uiPending = 0;
+                _txtLog.Text = string.Join(Environment.NewLine, _uiLines.ToArray())
+                               + Environment.NewLine;
+                _txtLog.SelectionStart = _txtLog.TextLength;
+                _txtLog.ScrollToCaret();
+                _uiScrollAt = DateTime.UtcNow;
+            }
+            catch { }
             _form.Activate();
             _form.BringToFront();
         }
@@ -1296,17 +1313,34 @@ namespace WindowGuardian
             if (_console) Console.WriteLine(line);
 
             _uiLines.Add(line);
-            while (_uiLines.Count > 400) _uiLines.RemoveAt(0);
-            if (_form != null && _txtLog != null && !_form.IsDisposed)
+            while (_uiLines.Count > _uiMaxLines) _uiLines.RemoveAt(0);
+
+            // 日志框是最贵的一环：以前每写一行就把最多 400 行的 TextBox 整个重建
+            // 并 ScrollToCaret 一次，5 次/秒，全在 UI 线程上 —— 界面发卡就是这么来的，
+            // 也是「新版本感觉比旧版慢」的真正原因。现在：
+            //   面板隐藏 → 什么都不做（ShowPanel 里一次性重建）
+            //   面板可见 → AppendText 增量追加；每 50 行才摊销式重建一次；
+            //              滚动最多 300ms 一次
+            if (_form == null || _txtLog == null || _form.IsDisposed) return;
+            if (!_form.Visible) { _uiPending = _uiCompactEvery; return; }
+            try
             {
-                try
+                _txtLog.AppendText(line + Environment.NewLine);
+                _uiPending++;
+                if (_uiPending >= _uiCompactEvery)
                 {
-                    _txtLog.Text = string.Join(Environment.NewLine, _uiLines.ToArray());
+                    _uiPending = 0;
+                    _txtLog.Text = string.Join(Environment.NewLine, _uiLines.ToArray())
+                                   + Environment.NewLine;
+                }
+                if ((DateTime.UtcNow - _uiScrollAt).TotalMilliseconds > 300)
+                {
+                    _uiScrollAt = DateTime.UtcNow;
                     _txtLog.SelectionStart = _txtLog.TextLength;
                     _txtLog.ScrollToCaret();
                 }
-                catch { }
             }
+            catch { }
         }
     }
 
